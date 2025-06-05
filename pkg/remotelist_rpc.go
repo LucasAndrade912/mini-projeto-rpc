@@ -2,6 +2,7 @@ package remoteList
 
 import (
 	"fmt"
+	"os"
 	"sync"
 )
 
@@ -12,8 +13,9 @@ type List struct {
 }
 
 type RemoteList struct {
-	Lists []List
-	Count int
+	Lists   []List
+	Count   int
+	LogFile *os.File
 }
 
 type AppendArgs struct {
@@ -37,6 +39,15 @@ func (remoteList *RemoteList) Append(args AppendArgs, reply *bool) error {
 
 	remoteList.Lists[args.List_ID].List = append(remoteList.Lists[args.List_ID].List, args.Value)
 	remoteList.Lists[args.List_ID].Size++
+
+	if remoteList.LogFile != nil {
+		_, err := remoteList.LogFile.WriteString(fmt.Sprintf("APPEND: %d %d\n", args.List_ID, args.Value))
+
+		if err != nil {
+			fmt.Println("Error writing to log file:", err)
+		}
+	}
+
 	*reply = true
 	fmt.Printf("Lista[%d]: %v\n", args.List_ID, remoteList.Lists[args.List_ID].List)
 	return nil
@@ -69,6 +80,15 @@ func (remoteList *RemoteList) Remove(list_id int, reply *int) error {
 	*reply = remoteList.Lists[list_id].List[len(remoteList.Lists[list_id].List)-1]
 	remoteList.Lists[list_id].List = remoteList.Lists[list_id].List[:len(remoteList.Lists[list_id].List)-1]
 	remoteList.Lists[list_id].Size--
+
+	if remoteList.LogFile != nil {
+		_, err := remoteList.LogFile.WriteString(fmt.Sprintf("REMOVE: %d\n", list_id))
+
+		if err != nil {
+			fmt.Println("Error writing to log file:", err)
+		}
+	}
+
 	fmt.Printf("Lista[%d]: %v\n", list_id, remoteList.Lists[list_id].List)
 	return nil
 }
@@ -86,5 +106,15 @@ func (remoteList *RemoteList) Size(list_id int, reply *int) error {
 }
 
 func NewRemoteList() *RemoteList {
-	return new(RemoteList)
+	logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+
+	if err != nil {
+		fmt.Println("Error opening log file:", err)
+		return nil
+	}
+
+	remoteList := new(RemoteList)
+	remoteList.LogFile = logFile
+
+	return remoteList
 }
