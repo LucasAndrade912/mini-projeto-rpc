@@ -1,8 +1,10 @@
 package remoteList
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -106,15 +108,68 @@ func (remoteList *RemoteList) Size(list_id int, reply *int) error {
 }
 
 func NewRemoteList() *RemoteList {
-	logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	remoteList := new(RemoteList)
+	remoteList.Lists = make([]List, 3)
+	remoteList.Count = 3
+
+	for i := 0; i < 3; i++ {
+		remoteList.Lists[i].List = make([]int, 0)
+		remoteList.Lists[i].Size = 0
+		fmt.Printf("List %d initialized.\n", i)
+	}
+
+	_, err := os.Stat("logs.txt")
+	fileExists := !os.IsNotExist(err)
+
+	logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 
 	if err != nil {
 		fmt.Println("Error opening log file:", err)
 		return nil
 	}
 
-	remoteList := new(RemoteList)
 	remoteList.LogFile = logFile
+
+	if fileExists {
+		fmt.Println("Log file found. Restoring previous state...")
+
+		logFile.Seek(0, 0)
+
+		scanner := bufio.NewScanner(logFile)
+		for scanner.Scan() {
+			line := scanner.Text()
+
+			if strings.HasPrefix(line, "APPEND:") {
+				var listID, value int
+				fmt.Sscanf(line, "APPEND: %d %d", &listID, &value)
+
+				if listID >= 0 && listID < remoteList.Count {
+					remoteList.Lists[listID].List = append(remoteList.Lists[listID].List, value)
+					remoteList.Lists[listID].Size++
+					fmt.Printf("Restored: APPEND %d to list %d\n", value, listID)
+				}
+			} else if strings.HasPrefix(line, "REMOVE:") {
+				var listID int
+				fmt.Sscanf(line, "REMOVE: %d", &listID)
+
+				if listID >= 0 && listID < remoteList.Count && len(remoteList.Lists[listID].List) > 0 {
+					remoteList.Lists[listID].List = remoteList.Lists[listID].List[:len(remoteList.Lists[listID].List)-1]
+					remoteList.Lists[listID].Size--
+					fmt.Printf("Restored: REMOVE from list %d\n", listID)
+				}
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			fmt.Println("Error reading log file:", err)
+		}
+
+		for i := 0; i < remoteList.Count; i++ {
+			fmt.Printf("List %d restored: %v\n", i, remoteList.Lists[i].List)
+		}
+	} else {
+		fmt.Println("No previous log file found. Starting with empty lists.")
+	}
 
 	return remoteList
 }
