@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -119,57 +120,37 @@ func NewRemoteList() *RemoteList {
 		fmt.Printf("List %d initialized.\n", i)
 	}
 
-	_, err := os.Stat("logs.txt")
-	fileExists := !os.IsNotExist(err)
+	// Verificar se existe snapshot mais recente
+	snapshotRestored := restoreFromLatestSnapshot(remoteList)
 
-	logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	// Se não foi possível restaurar do snapshot, tentar do arquivo de logs
+	if !snapshotRestored {
+		_, err := os.Stat("logs.txt")
+		fileExists := !os.IsNotExist(err)
 
-	if err != nil {
-		fmt.Println("Error opening log file:", err)
-		return nil
-	}
+		logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 
-	remoteList.LogFile = logFile
-
-	if fileExists {
-		fmt.Println("Log file found. Restoring previous state...")
-
-		logFile.Seek(0, 0)
-
-		scanner := bufio.NewScanner(logFile)
-		for scanner.Scan() {
-			line := scanner.Text()
-
-			if strings.HasPrefix(line, "APPEND:") {
-				var listID, value int
-				fmt.Sscanf(line, "APPEND: %d %d", &listID, &value)
-
-				if listID >= 0 && listID < remoteList.Count {
-					remoteList.Lists[listID].List = append(remoteList.Lists[listID].List, value)
-					remoteList.Lists[listID].Size++
-					fmt.Printf("Restored: APPEND %d to list %d\n", value, listID)
-				}
-			} else if strings.HasPrefix(line, "REMOVE:") {
-				var listID int
-				fmt.Sscanf(line, "REMOVE: %d", &listID)
-
-				if listID >= 0 && listID < remoteList.Count && len(remoteList.Lists[listID].List) > 0 {
-					remoteList.Lists[listID].List = remoteList.Lists[listID].List[:len(remoteList.Lists[listID].List)-1]
-					remoteList.Lists[listID].Size--
-					fmt.Printf("Restored: REMOVE from list %d\n", listID)
-				}
-			}
+		if err != nil {
+			fmt.Println("Error opening log file:", err)
+			return remoteList // Retorna remoteList vazio em vez de nil
 		}
 
-		if err := scanner.Err(); err != nil {
-			fmt.Println("Error reading log file:", err)
-		}
+		remoteList.LogFile = logFile
 
-		for i := 0; i < remoteList.Count; i++ {
-			fmt.Printf("List %d restored: %v\n", i, remoteList.Lists[i].List)
+		if fileExists {
+			fmt.Println("Log file found. Restoring previous state...")
+			restoreFromLogFile(remoteList, logFile)
+		} else {
+			fmt.Println("No previous log file found. Starting with empty lists.")
 		}
 	} else {
-		fmt.Println("No previous log file found. Starting with empty lists.")
+		// Mesmo se restauramos do snapshot, precisamos abrir o arquivo de log para futuras operações
+		logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			fmt.Println("Error opening log file:", err)
+		} else {
+			remoteList.LogFile = logFile
+		}
 	}
 
 	go startSnapshotWorker(remoteList)
@@ -240,4 +221,149 @@ func createSnapshot(remoteList *RemoteList) {
 	}
 
 	fmt.Printf("Snapshot created: %s\n", snapshotFilename)
+}
+
+// Função para restaurar do arquivo de log
+func restoreFromLogFile(remoteList *RemoteList, logFile *os.File) {
+	logFile.Seek(0, 0)
+
+	scanner := bufio.NewScanner(logFile)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if strings.HasPrefix(line, "APPEND:") {
+			var listID, value int
+			fmt.Sscanf(line, "APPEND: %d %d", &listID, &value)
+
+			if listID >= 0 && listID < remoteList.Count {
+				remoteList.Lists[listID].List = append(remoteList.Lists[listID].List, value)
+				remoteList.Lists[listID].Size++
+				fmt.Printf("Restored from logs: APPEND %d to list %d\n", value, listID)
+			}
+		} else if strings.HasPrefix(line, "REMOVE:") {
+			var listID int
+			fmt.Sscanf(line, "REMOVE: %d", &listID)
+
+			if listID >= 0 && listID < remoteList.Count && len(remoteList.Lists[listID].List) > 0 {
+				remoteList.Lists[listID].List = remoteList.Lists[listID].List[:len(remoteList.Lists[listID].List)-1]
+				remoteList.Lists[listID].Size--
+				fmt.Printf("Restored from logs: REMOVE from list %d\n", listID)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Println("Error reading log file:", err)
+	}
+
+	for i := 0; i < remoteList.Count; i++ {
+		fmt.Printf("List %d restored from logs: %v\n", i, remoteList.Lists[i].List)
+	}
+}
+
+// Função para restaurar do snapshot mais recente
+func restoreFromLatestSnapshot(remoteList *RemoteList) bool {
+	// Verificar se a pasta de snapshots existe
+	snapshotsDir := "snapshots"
+	if _, err := os.Stat(snapshotsDir); os.IsNotExist(err) {
+		return false // Sem pasta de snapshots, não há como restaurar
+	}
+
+	// Obter lista de arquivos da pasta de snapshots
+	files, err := os.ReadDir(snapshotsDir)
+	if err != nil {
+		fmt.Printf("Error reading snapshots directory: %v\n", err)
+		return false
+	}
+
+	if len(files) == 0 {
+		return false // Pasta vazia, não há snapshots
+	}
+
+	// Encontrar o snapshot mais recente
+	var latestSnapshot string
+	var latestTime time.Time
+	for _, file := range files {
+		if file.IsDir() || !strings.HasPrefix(file.Name(), "snapshot_") {
+			continue // Ignorar diretórios e arquivos que não são snapshots
+		}
+
+		// Extrair timestamp do nome do arquivo (formato: snapshot_20060102_150405.txt)
+		timeStr := strings.TrimPrefix(file.Name(), "snapshot_")
+		timeStr = strings.TrimSuffix(timeStr, ".txt")
+		snapTime, err := time.Parse("20060102_150405", timeStr)
+
+		if err == nil && (latestSnapshot == "" || snapTime.After(latestTime)) {
+			latestSnapshot = file.Name()
+			latestTime = snapTime
+		}
+	}
+
+	if latestSnapshot == "" {
+		return false // Nenhum snapshot válido encontrado
+	}
+
+	// Tentar abrir e ler o snapshot mais recente
+	snapshotPath := filepath.Join(snapshotsDir, latestSnapshot)
+	file, err := os.Open(snapshotPath)
+	if err != nil {
+		fmt.Printf("Error opening latest snapshot: %v\n", err)
+		return false
+	}
+	defer file.Close()
+
+	fmt.Printf("Restoring from latest snapshot: %s\n", latestSnapshot)
+
+	// Pular as duas primeiras linhas (cabeçalho)
+	scanner := bufio.NewScanner(file)
+	scanner.Scan() // SNAPSHOT CREATED AT: ...
+	scanner.Scan() // ------------------------
+
+	// Ler cada linha de lista
+	listIndex := 0
+	for scanner.Scan() && listIndex < remoteList.Count {
+		line := scanner.Text()
+
+		// Formato esperado: "LIST X (size=N): v1, v2, v3"
+		if !strings.HasPrefix(line, "LIST ") {
+			continue
+		}
+
+		// Extrair os valores da lista
+		colonIndex := strings.Index(line, ":")
+		if colonIndex == -1 {
+			continue
+		}
+
+		valuesStr := strings.TrimSpace(line[colonIndex+1:])
+		if valuesStr == "empty" {
+			// Lista vazia
+			listIndex++
+			continue
+		}
+
+		// Processar os valores separados por vírgula
+		valueStrs := strings.Split(valuesStr, ", ")
+		for _, valueStr := range valueStrs {
+			var value int
+			if _, err := fmt.Sscanf(valueStr, "%d", &value); err == nil {
+				remoteList.Lists[listIndex].List = append(remoteList.Lists[listIndex].List, value)
+				remoteList.Lists[listIndex].Size++
+			}
+		}
+
+		listIndex++
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("Error reading snapshot file: %v\n", err)
+		return false
+	}
+
+	// Mostrar status da restauração
+	for i := 0; i < remoteList.Count; i++ {
+		fmt.Printf("List %d restored from snapshot: %v\n", i, remoteList.Lists[i].List)
+	}
+
+	return true
 }
