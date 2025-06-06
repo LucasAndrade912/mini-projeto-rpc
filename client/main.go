@@ -62,7 +62,7 @@ func main() {
 		fmt.Println("Elemento adicionado:", reply)
 	}
 
-	argsAppend = remotelist.AppendArgs{List_ID: 0, Value: 50}
+	argsAppend = remotelist.AppendArgs{List_ID: 0, Value: 578}
 	err = client.Call("RemoteList.Append", argsAppend, &reply)
 
 	if err != nil {

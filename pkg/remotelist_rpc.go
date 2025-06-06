@@ -3,6 +3,7 @@ package remoteList
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,10 +121,8 @@ func NewRemoteList() *RemoteList {
 		fmt.Printf("List %d initialized.\n", i)
 	}
 
-	// Verificar se existe snapshot mais recente
 	snapshotRestored := restoreFromLatestSnapshot(remoteList)
 
-	// Se não foi possível restaurar do snapshot, tentar do arquivo de logs
 	if !snapshotRestored {
 		_, err := os.Stat("logs.txt")
 		fileExists := !os.IsNotExist(err)
@@ -132,7 +131,7 @@ func NewRemoteList() *RemoteList {
 
 		if err != nil {
 			fmt.Println("Error opening log file:", err)
-			return remoteList // Retorna remoteList vazio em vez de nil
+			return remoteList
 		}
 
 		remoteList.LogFile = logFile
@@ -144,7 +143,6 @@ func NewRemoteList() *RemoteList {
 			fmt.Println("No previous log file found. Starting with empty lists.")
 		}
 	} else {
-		// Mesmo se restauramos do snapshot, precisamos abrir o arquivo de log para futuras operações
 		logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 		if err != nil {
 			fmt.Println("Error opening log file:", err)
@@ -223,8 +221,12 @@ func createSnapshot(remoteList *RemoteList) {
 	fmt.Printf("Snapshot created: %s\n", snapshotFilename)
 }
 
-// Função para restaurar do arquivo de log
 func restoreFromLogFile(remoteList *RemoteList, logFile *os.File) {
+	_, err := logFile.Seek(0, io.SeekCurrent)
+	if err != nil {
+		fmt.Println("Error getting current file position:", err)
+	}
+
 	logFile.Seek(0, 0)
 
 	scanner := bufio.NewScanner(logFile)
@@ -256,20 +258,19 @@ func restoreFromLogFile(remoteList *RemoteList, logFile *os.File) {
 		fmt.Println("Error reading log file:", err)
 	}
 
+	logFile.Seek(0, io.SeekEnd)
+
 	for i := 0; i < remoteList.Count; i++ {
 		fmt.Printf("List %d restored from logs: %v\n", i, remoteList.Lists[i].List)
 	}
 }
 
-// Função para restaurar do snapshot mais recente
 func restoreFromLatestSnapshot(remoteList *RemoteList) bool {
-	// Verificar se a pasta de snapshots existe
 	snapshotsDir := "snapshots"
 	if _, err := os.Stat(snapshotsDir); os.IsNotExist(err) {
-		return false // Sem pasta de snapshots, não há como restaurar
+		return false
 	}
 
-	// Obter lista de arquivos da pasta de snapshots
 	files, err := os.ReadDir(snapshotsDir)
 	if err != nil {
 		fmt.Printf("Error reading snapshots directory: %v\n", err)
@@ -277,18 +278,16 @@ func restoreFromLatestSnapshot(remoteList *RemoteList) bool {
 	}
 
 	if len(files) == 0 {
-		return false // Pasta vazia, não há snapshots
+		return false
 	}
 
-	// Encontrar o snapshot mais recente
 	var latestSnapshot string
 	var latestTime time.Time
 	for _, file := range files {
 		if file.IsDir() || !strings.HasPrefix(file.Name(), "snapshot_") {
-			continue // Ignorar diretórios e arquivos que não são snapshots
+			continue
 		}
 
-		// Extrair timestamp do nome do arquivo (formato: snapshot_20060102_150405.txt)
 		timeStr := strings.TrimPrefix(file.Name(), "snapshot_")
 		timeStr = strings.TrimSuffix(timeStr, ".txt")
 		snapTime, err := time.Parse("20060102_150405", timeStr)
@@ -300,10 +299,9 @@ func restoreFromLatestSnapshot(remoteList *RemoteList) bool {
 	}
 
 	if latestSnapshot == "" {
-		return false // Nenhum snapshot válido encontrado
+		return false
 	}
 
-	// Tentar abrir e ler o snapshot mais recente
 	snapshotPath := filepath.Join(snapshotsDir, latestSnapshot)
 	file, err := os.Open(snapshotPath)
 	if err != nil {
@@ -314,22 +312,18 @@ func restoreFromLatestSnapshot(remoteList *RemoteList) bool {
 
 	fmt.Printf("Restoring from latest snapshot: %s\n", latestSnapshot)
 
-	// Pular as duas primeiras linhas (cabeçalho)
 	scanner := bufio.NewScanner(file)
 	scanner.Scan() // SNAPSHOT CREATED AT: ...
 	scanner.Scan() // ------------------------
 
-	// Ler cada linha de lista
 	listIndex := 0
 	for scanner.Scan() && listIndex < remoteList.Count {
 		line := scanner.Text()
 
-		// Formato esperado: "LIST X (size=N): v1, v2, v3"
 		if !strings.HasPrefix(line, "LIST ") {
 			continue
 		}
 
-		// Extrair os valores da lista
 		colonIndex := strings.Index(line, ":")
 		if colonIndex == -1 {
 			continue
@@ -337,12 +331,10 @@ func restoreFromLatestSnapshot(remoteList *RemoteList) bool {
 
 		valuesStr := strings.TrimSpace(line[colonIndex+1:])
 		if valuesStr == "empty" {
-			// Lista vazia
 			listIndex++
 			continue
 		}
 
-		// Processar os valores separados por vírgula
 		valueStrs := strings.Split(valuesStr, ", ")
 		for _, valueStr := range valueStrs {
 			var value int
@@ -360,7 +352,6 @@ func restoreFromLatestSnapshot(remoteList *RemoteList) bool {
 		return false
 	}
 
-	// Mostrar status da restauração
 	for i := 0; i < remoteList.Count; i++ {
 		fmt.Printf("List %d restored from snapshot: %v\n", i, remoteList.Lists[i].List)
 	}
