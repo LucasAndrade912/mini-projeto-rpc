@@ -10,6 +10,7 @@ import (
 
 func restoreFromLogFile(remoteList *RemoteList, logFile *os.File) {
 	_, err := logFile.Seek(0, io.SeekCurrent)
+
 	if err != nil {
 		fmt.Println("Error getting current file position:", err)
 	}
@@ -24,18 +25,24 @@ func restoreFromLogFile(remoteList *RemoteList, logFile *os.File) {
 			var listID, value int
 			fmt.Sscanf(line, "APPEND: %d %d", &listID, &value)
 
-			if listID >= 0 && listID < remoteList.Count {
-				remoteList.Lists[listID].List = append(remoteList.Lists[listID].List, value)
-				remoteList.Lists[listID].Size++
-				fmt.Printf("Restored from logs: APPEND %d to list %d\n", value, listID)
+			if _, exists := remoteList.Lists[listID]; !exists {
+				remoteList.Lists[listID] = &List{
+					List: make([]int, 0),
+					Size: 0,
+				}
 			}
+
+			remoteList.Lists[listID].List = append(remoteList.Lists[listID].List, value)
+			remoteList.Lists[listID].Size++
+			fmt.Printf("Restored from logs: APPEND %d to list %d\n", value, listID)
+
 		} else if strings.HasPrefix(line, "REMOVE:") {
 			var listID int
 			fmt.Sscanf(line, "REMOVE: %d", &listID)
 
-			if listID >= 0 && listID < remoteList.Count && len(remoteList.Lists[listID].List) > 0 {
-				remoteList.Lists[listID].List = remoteList.Lists[listID].List[:len(remoteList.Lists[listID].List)-1]
-				remoteList.Lists[listID].Size--
+			if list, exists := remoteList.Lists[listID]; exists && len(list.List) > 0 {
+				list.List = list.List[:len(list.List)-1]
+				list.Size--
 				fmt.Printf("Restored from logs: REMOVE from list %d\n", listID)
 			}
 		}
@@ -47,7 +54,7 @@ func restoreFromLogFile(remoteList *RemoteList, logFile *os.File) {
 
 	logFile.Seek(0, io.SeekEnd)
 
-	for i := 0; i < remoteList.Count; i++ {
-		fmt.Printf("List %d restored from logs: %v\n", i, remoteList.Lists[i].List)
+	for listID, list := range remoteList.Lists {
+		fmt.Printf("List %d restored from logs: %v\n", listID, list.List)
 	}
 }

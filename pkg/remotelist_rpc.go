@@ -13,7 +13,8 @@ type List struct {
 }
 
 type RemoteList struct {
-	Lists   []List
+	Lists   map[int]*List
+	mu      sync.RWMutex
 	Count   int
 	LogFile *os.File
 }
@@ -29,91 +30,104 @@ type GetArgs struct {
 }
 
 func (remoteList *RemoteList) Append(args AppendArgs, reply *bool) error {
-	if args.List_ID < 0 || args.List_ID >= remoteList.Count {
-		*reply = false
-		return nil
+	remoteList.mu.Lock()
+
+	if _, exists := remoteList.Lists[args.List_ID]; !exists {
+		remoteList.Lists[args.List_ID] = &List{
+			List: make([]int, 0),
+			Size: 0,
+		}
+		remoteList.Count++
+		fmt.Printf("Created new list with ID %d\n", args.List_ID)
 	}
+	remoteList.mu.Unlock()
 
-	remoteList.Lists[args.List_ID].mu.Lock()
-	defer remoteList.Lists[args.List_ID].mu.Unlock()
+	list := remoteList.Lists[args.List_ID]
+	list.mu.Lock()
+	defer list.mu.Unlock()
 
-	remoteList.Lists[args.List_ID].List = append(remoteList.Lists[args.List_ID].List, args.Value)
-	remoteList.Lists[args.List_ID].Size++
+	list.List = append(list.List, args.Value)
+	list.Size++
 
 	if remoteList.LogFile != nil {
 		_, err := remoteList.LogFile.WriteString(fmt.Sprintf("APPEND: %d %d\n", args.List_ID, args.Value))
-
 		if err != nil {
 			fmt.Println("Error writing to log file:", err)
 		}
 	}
 
 	*reply = true
-	fmt.Printf("Lista[%d]: %v\n", args.List_ID, remoteList.Lists[args.List_ID].List)
+	fmt.Printf("Lista[%d]: %v\n", args.List_ID, list.List)
 	return nil
 }
 
 func (remoteList *RemoteList) Get(args GetArgs, reply *int) error {
-	if args.List_ID < 0 || args.List_ID >= remoteList.Count {
+	remoteList.mu.RLock()
+	list, exists := remoteList.Lists[args.List_ID]
+	remoteList.mu.RUnlock()
+
+	if !exists {
 		return nil
 	}
 
-	remoteList.Lists[args.List_ID].mu.Lock()
-	defer remoteList.Lists[args.List_ID].mu.Unlock()
+	list.mu.Lock()
+	defer list.mu.Unlock()
 
-	if args.Index < 0 || args.Index >= len(remoteList.Lists[args.List_ID].List) {
+	if args.Index < 0 || args.Index >= len(list.List) {
 		return nil
 	}
 
-	*reply = remoteList.Lists[args.List_ID].List[args.Index]
+	*reply = list.List[args.Index]
 	return nil
 }
 
 func (remoteList *RemoteList) Remove(list_id int, reply *int) error {
-	if list_id < 0 || list_id >= remoteList.Count {
+	remoteList.mu.RLock()
+	list, exists := remoteList.Lists[list_id]
+	remoteList.mu.RUnlock()
+
+	if !exists || len(list.List) == 0 {
 		return nil
 	}
 
-	remoteList.Lists[list_id].mu.Lock()
-	defer remoteList.Lists[list_id].mu.Unlock()
+	list.mu.Lock()
+	defer list.mu.Unlock()
 
-	*reply = remoteList.Lists[list_id].List[len(remoteList.Lists[list_id].List)-1]
-	remoteList.Lists[list_id].List = remoteList.Lists[list_id].List[:len(remoteList.Lists[list_id].List)-1]
-	remoteList.Lists[list_id].Size--
+	*reply = list.List[len(list.List)-1]
+	list.List = list.List[:len(list.List)-1]
+	list.Size--
 
 	if remoteList.LogFile != nil {
 		_, err := remoteList.LogFile.WriteString(fmt.Sprintf("REMOVE: %d\n", list_id))
-
 		if err != nil {
 			fmt.Println("Error writing to log file:", err)
 		}
 	}
 
-	fmt.Printf("Lista[%d]: %v\n", list_id, remoteList.Lists[list_id].List)
+	fmt.Printf("Lista[%d]: %v\n", list_id, list.List)
 	return nil
 }
 
 func (remoteList *RemoteList) Size(list_id int, reply *int) error {
-	if list_id < 0 || list_id >= remoteList.Count {
+	remoteList.mu.RLock()
+	list, exists := remoteList.Lists[list_id]
+	remoteList.mu.RUnlock()
+
+	if !exists {
+		*reply = 0
 		return nil
 	}
 
-	remoteList.Lists[list_id].mu.Lock()
-	defer remoteList.Lists[list_id].mu.Unlock()
+	list.mu.Lock()
+	defer list.mu.Unlock()
 
-	*reply = remoteList.Lists[list_id].Size
+	*reply = list.Size
 	return nil
 }
 
 func NewRemoteList() *RemoteList {
-	remoteList := new(RemoteList)
-	remoteList.Lists = make([]List, 3)
-	remoteList.Count = 3
-
-	for i := 0; i < 3; i++ {
-		remoteList.Lists[i].List = make([]int, 0)
-		remoteList.Lists[i].Size = 0
-		fmt.Printf("List %d initialized.\n", i)
+	remoteList := &RemoteList{
+		Lists: make(map[int]*List),
 	}
 
 	snapshotRestored := restoreFromLatestSnapshot(remoteList)
@@ -123,7 +137,6 @@ func NewRemoteList() *RemoteList {
 		fileExists := !os.IsNotExist(err)
 
 		logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
-
 		if err != nil {
 			fmt.Println("Error opening log file:", err)
 			return remoteList
@@ -135,7 +148,7 @@ func NewRemoteList() *RemoteList {
 			fmt.Println("Log file found. Restoring previous state...")
 			restoreFromLogFile(remoteList, logFile)
 		} else {
-			fmt.Println("No previous log file found. Starting with empty lists.")
+			fmt.Println("No previous log file found. Starting with empty map.")
 		}
 	} else {
 		logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)

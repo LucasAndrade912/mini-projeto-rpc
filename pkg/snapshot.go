@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -21,14 +22,17 @@ func startSnapshotWorker(remoteList *RemoteList) {
 }
 
 func createSnapshot(remoteList *RemoteList) {
-	for i := 0; i < remoteList.Count; i++ {
-		remoteList.Lists[i].mu.Lock()
+	remoteList.mu.RLock()
+
+	for _, list := range remoteList.Lists {
+		list.mu.Lock()
 	}
 
 	defer func() {
-		for i := 0; i < remoteList.Count; i++ {
-			remoteList.Lists[i].mu.Unlock()
+		for _, list := range remoteList.Lists {
+			list.mu.Unlock()
 		}
+		remoteList.mu.RUnlock()
 	}()
 
 	snapshotsDir := "snapshots"
@@ -54,11 +58,18 @@ func createSnapshot(remoteList *RemoteList) {
 	snapshotFile.WriteString(fmt.Sprintf("SNAPSHOT CREATED AT: %s\n", timestamp))
 	snapshotFile.WriteString("----------------------------------------\n")
 
-	for i := 0; i < remoteList.Count; i++ {
-		snapshotFile.WriteString(fmt.Sprintf("LIST %d (size=%d): ", i, remoteList.Lists[i].Size))
+	var listIDs []int
+	for listID := range remoteList.Lists {
+		listIDs = append(listIDs, listID)
+	}
+	sort.Ints(listIDs)
 
-		if len(remoteList.Lists[i].List) > 0 {
-			for j, value := range remoteList.Lists[i].List {
+	for _, listID := range listIDs {
+		list := remoteList.Lists[listID]
+		snapshotFile.WriteString(fmt.Sprintf("LIST %d (size=%d): ", listID, list.Size))
+
+		if len(list.List) > 0 {
+			for j, value := range list.List {
 				if j > 0 {
 					snapshotFile.WriteString(", ")
 				}
@@ -125,22 +136,32 @@ func restoreFromLatestSnapshot(remoteList *RemoteList) bool {
 	scanner.Scan() // SNAPSHOT CREATED AT: ...
 	scanner.Scan() // ------------------------
 
-	listIndex := 0
-	for scanner.Scan() && listIndex < remoteList.Count {
+	for scanner.Scan() {
 		line := scanner.Text()
 
 		if !strings.HasPrefix(line, "LIST ") {
 			continue
 		}
 
+		var listID int
 		colonIndex := strings.Index(line, ":")
 		if colonIndex == -1 {
 			continue
 		}
 
+		listPart := line[:colonIndex]
+		fmt.Sscanf(listPart, "LIST %d", &listID)
+
 		valuesStr := strings.TrimSpace(line[colonIndex+1:])
+
+		if _, exists := remoteList.Lists[listID]; !exists {
+			remoteList.Lists[listID] = &List{
+				List: make([]int, 0),
+				Size: 0,
+			}
+		}
+
 		if valuesStr == "empty" {
-			listIndex++
 			continue
 		}
 
@@ -148,12 +169,10 @@ func restoreFromLatestSnapshot(remoteList *RemoteList) bool {
 		for _, valueStr := range valueStrs {
 			var value int
 			if _, err := fmt.Sscanf(valueStr, "%d", &value); err == nil {
-				remoteList.Lists[listIndex].List = append(remoteList.Lists[listIndex].List, value)
-				remoteList.Lists[listIndex].Size++
+				remoteList.Lists[listID].List = append(remoteList.Lists[listID].List, value)
+				remoteList.Lists[listID].Size++
 			}
 		}
-
-		listIndex++
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -161,8 +180,8 @@ func restoreFromLatestSnapshot(remoteList *RemoteList) bool {
 		return false
 	}
 
-	for i := 0; i < remoteList.Count; i++ {
-		fmt.Printf("List %d restored from snapshot: %v\n", i, remoteList.Lists[i].List)
+	for listID, list := range remoteList.Lists {
+		fmt.Printf("List %d restored from snapshot: %v\n", listID, list.List)
 	}
 
 	return true
