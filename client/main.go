@@ -1,111 +1,193 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
-	remotelist "mini-projeto-rpc/remotelist/pkg"
+	remoteList "mini-projeto-rpc/remotelist/pkg"
 	"net/rpc"
+	"os"
+	"strconv"
+	"strings"
 )
 
 func main() {
 	client, err := rpc.Dial("tcp", ":5000")
+
 	if err != nil {
-		fmt.Print("dialing:", err)
+		fmt.Println("Erro ao conectar ao servidor:", err)
+		return
+	}
+	defer client.Close()
+
+	fmt.Println("=== Cliente RPC Interativo ===")
+	fmt.Println("Conectado ao servidor RPC em :5000")
+	fmt.Println("\nComandos disponíveis:")
+	fmt.Println("  append <list_id> <value>  - Adiciona um valor à lista")
+	fmt.Println("  get <list_id> <index>     - Obtém valor em uma posição")
+	fmt.Println("  remove <list_id>          - Remove último elemento da lista")
+	fmt.Println("  size <list_id>            - Obtém tamanho da lista")
+	fmt.Println("  exit                      - Sair do programa")
+	fmt.Println()
+
+	scanner := bufio.NewScanner(os.Stdin)
+
+	for {
+		fmt.Print("rpc> ")
+
+		if !scanner.Scan() {
+			break
+		}
+
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+
+		parts := strings.Fields(input)
+		command := strings.ToLower(parts[0])
+
+		switch command {
+		case "exit", "quit":
+			fmt.Println("Encerrando cliente...")
+			return
+
+		case "append":
+			handleAppend(client, parts)
+
+		case "get":
+			handleGet(client, parts)
+
+		case "remove":
+			handleRemove(client, parts)
+
+		case "size":
+			handleSize(client, parts)
+
+		default:
+			fmt.Printf("Comando desconhecido: %s\n", command)
+			fmt.Println("Digite 'help' para ver os comandos disponíveis.")
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("Erro ao ler entrada: %v\n", err)
+	}
+}
+
+func handleAppend(client *rpc.Client, parts []string) {
+	if len(parts) != 3 {
+		fmt.Println("Uso: append <list_id> <value>")
+		fmt.Println("Exemplo: append 1 42")
+		return
+	}
+
+	listID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		fmt.Printf("ID da lista inválido: %s\n", parts[1])
+		return
+	}
+
+	value, err := strconv.Atoi(parts[2])
+	if err != nil {
+		fmt.Printf("Valor inválido: %s\n", parts[2])
+		return
+	}
+
+	args := remoteList.AppendArgs{
+		List_ID: listID,
+		Value:   value,
 	}
 
 	var reply bool
-	var reply_i int
-
-	fmt.Println("------------ Testando método Append")
-
-	argsAppend := remotelist.AppendArgs{List_ID: 0, Value: 10}
-	err = client.Call("RemoteList.Append", argsAppend, &reply)
-
+	err = client.Call("RemoteList.Append", args, &reply)
 	if err != nil {
-		fmt.Print("Error:", err)
-	} else {
-		fmt.Println("Elemento adicionado:", reply)
+		fmt.Printf("Erro ao chamar Append: %v\n", err)
+		return
 	}
 
-	argsAppend = remotelist.AppendArgs{List_ID: 1, Value: 20}
-	err = client.Call("RemoteList.Append", argsAppend, &reply)
-
-	if err != nil {
-		fmt.Print("Error:", err)
+	if reply {
+		fmt.Printf("✓ Valor %d adicionado à lista %d\n", value, listID)
 	} else {
-		fmt.Println("Elemento adicionado:", reply)
+		fmt.Printf("✗ Falha ao adicionar valor %d à lista %d\n", value, listID)
+	}
+}
+
+func handleGet(client *rpc.Client, parts []string) {
+	if len(parts) != 3 {
+		fmt.Println("Uso: get <list_id> <index>")
+		fmt.Println("Exemplo: get 1 0")
+		return
 	}
 
-	argsAppend = remotelist.AppendArgs{List_ID: 2, Value: 30}
-	err = client.Call("RemoteList.Append", argsAppend, &reply)
-
+	listID, err := strconv.Atoi(parts[1])
 	if err != nil {
-		fmt.Print("Error:", err)
-	} else {
-		fmt.Println("Elemento adicionado:", reply)
+		fmt.Printf("ID da lista inválido: %s\n", parts[1])
+		return
 	}
 
-	argsAppend = remotelist.AppendArgs{List_ID: 0, Value: 15}
-	err = client.Call("RemoteList.Append", argsAppend, &reply)
-
+	index, err := strconv.Atoi(parts[2])
 	if err != nil {
-		fmt.Print("Error:", err)
-	} else {
-		fmt.Println("Elemento adicionado:", reply)
+		fmt.Printf("Índice inválido: %s\n", parts[2])
+		return
 	}
 
-	argsAppend = remotelist.AppendArgs{List_ID: 1, Value: 25}
-	err = client.Call("RemoteList.Append", argsAppend, &reply)
-
-	if err != nil {
-		fmt.Print("Error:", err)
-	} else {
-		fmt.Println("Elemento adicionado:", reply)
+	args := remoteList.GetArgs{
+		List_ID: listID,
+		Index:   index,
 	}
 
-	argsAppend = remotelist.AppendArgs{List_ID: 0, Value: 578}
-	err = client.Call("RemoteList.Append", argsAppend, &reply)
-
+	var reply int
+	err = client.Call("RemoteList.Get", args, &reply)
 	if err != nil {
-		fmt.Print("Error:", err)
-	} else {
-		fmt.Println("Elemento adicionado:", reply)
+		fmt.Printf("Erro ao chamar Get: %v\n", err)
+		return
 	}
 
-	fmt.Println("------------ Testando método Get")
+	fmt.Printf("Valor na posição %d da lista %d: %d\n", index, listID, reply)
+}
 
-	argsGet := remotelist.GetArgs{List_ID: 0, Index: 1}
-	err = client.Call("RemoteList.Get", argsGet, &reply_i)
-
-	if err != nil {
-		fmt.Print("Error:", err)
-	} else {
-		fmt.Println("Elemento obtido:", reply_i)
+func handleRemove(client *rpc.Client, parts []string) {
+	if len(parts) != 2 {
+		fmt.Println("Uso: remove <list_id>")
+		fmt.Println("Exemplo: remove 1")
+		return
 	}
 
-	argsGet = remotelist.GetArgs{List_ID: 1, Index: 0}
-	err = client.Call("RemoteList.Get", argsGet, &reply_i)
-
+	listID, err := strconv.Atoi(parts[1])
 	if err != nil {
-		fmt.Print("Error:", err)
-	} else {
-		fmt.Println("Elemento obtido:", reply_i)
+		fmt.Printf("ID da lista inválido: %s\n", parts[1])
+		return
 	}
 
-	fmt.Println("------------ Testando método Remove")
-
-	err = client.Call("RemoteList.Remove", 0, &reply_i)
-
+	var reply int
+	err = client.Call("RemoteList.Remove", listID, &reply)
 	if err != nil {
-		fmt.Print("Error:", err)
-	} else {
-		fmt.Println("Elemento retirado:", reply_i)
+		fmt.Printf("Erro ao chamar Remove: %v\n", err)
+		return
 	}
 
-	err = client.Call("RemoteList.Remove", 0, &reply_i)
+	fmt.Printf("✓ Elemento removido da lista %d: %d\n", listID, reply)
+}
 
-	if err != nil {
-		fmt.Print("Error:", err)
-	} else {
-		fmt.Println("Elemento retirado:", reply_i)
+func handleSize(client *rpc.Client, parts []string) {
+	if len(parts) != 2 {
+		fmt.Println("Uso: size <list_id>")
+		fmt.Println("Exemplo: size 1")
+		return
 	}
+
+	listID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		fmt.Printf("ID da lista inválido: %s\n", parts[1])
+		return
+	}
+
+	var reply int
+	err = client.Call("RemoteList.Size", listID, &reply)
+	if err != nil {
+		fmt.Printf("Erro ao chamar Size: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Tamanho da lista %d: %d elementos\n", listID, reply)
 }
