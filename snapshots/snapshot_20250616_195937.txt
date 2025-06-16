@@ -1,0 +1,6 @@
+SNAPSHOT CREATED AT: 20250616_195937
+----------------------------------------
+LIST 1 (size=3): 100, 145, 500
+LIST 2 (size=1): 90
+LIST 3 (size=0): empty
+LIST 10 (size=2): 340, 1000

@@ -83,6 +83,8 @@ func createSnapshot(remoteList *RemoteList) {
 	}
 
 	fmt.Printf("Snapshot created: %s\n", snapshotFilename)
+
+	clearLogFile(remoteList)
 }
 
 func restoreFromLatestSnapshot(remoteList *RemoteList) bool {

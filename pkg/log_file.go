@@ -58,3 +58,20 @@ func restoreFromLogFile(remoteList *RemoteList, logFile *os.File) {
 		fmt.Printf("List %d restored from logs: %v\n", listID, list.List)
 	}
 }
+
+func clearLogFile(remoteList *RemoteList) {
+	if remoteList.LogFile == nil {
+		return
+	}
+
+	remoteList.LogFile.Close()
+
+	logFile, err := os.OpenFile("logs.txt", os.O_TRUNC|os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		fmt.Printf("Error clearing log file: %v\n", err)
+		return
+	}
+
+	remoteList.LogFile = logFile
+	fmt.Println("Log file cleared after snapshot creation.")
+}

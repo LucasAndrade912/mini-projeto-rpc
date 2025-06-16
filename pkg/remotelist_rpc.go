@@ -151,7 +151,7 @@ func NewRemoteList() *RemoteList {
 			fmt.Println("No previous log file found. Starting with empty map.")
 		}
 	} else {
-		logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+		logFile, err := os.OpenFile("logs.txt", os.O_TRUNC|os.O_CREATE|os.O_RDWR, 0644)
 		if err != nil {
 			fmt.Println("Error opening log file:", err)
 		} else {
