@@ -12,7 +12,7 @@ func main() {
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(remoteList)
-	l, e := net.Listen("tcp", "[localhost]:5000")
+	l, e := net.Listen("tcp", ":5000")
 
 	if e != nil {
 		fmt.Println("listen error:", e)

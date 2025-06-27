@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	client, err := rpc.Dial("tcp", ":5000")
+	client, err := rpc.Dial("tcp", "rpc-server:5000")
 
 	if err != nil {
 		fmt.Println("Erro ao conectar ao servidor:", err)
